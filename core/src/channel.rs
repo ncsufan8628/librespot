@@ -1,16 +1,20 @@
-use std::collections::HashMap;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    fmt,
+    pin::Pin,
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use futures_core::Stream;
-use futures_util::lock::BiLock;
-use futures_util::{ready, StreamExt};
+use futures_util::{lock::BiLock, ready, StreamExt};
+use num_traits::FromPrimitive;
+use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::util::SeqGenerator;
+use crate::{packet::PacketType, util::SeqGenerator, Error};
 
 component! {
     ChannelManager : ChannelManagerInner {
@@ -23,10 +27,22 @@ component! {
     }
 }
 
-const ONE_SECOND_IN_MS: usize = 1000;
+const ONE_SECOND: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Error, Hash, PartialEq, Eq, Copy, Clone)]
 pub struct ChannelError;
+
+impl From<ChannelError> for Error {
+    fn from(err: ChannelError) -> Self {
+        Error::aborted(err)
+    }
+}
+
+impl fmt::Display for ChannelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "channel error")
+    }
+}
 
 pub struct Channel {
     receiver: mpsc::UnboundedReceiver<(u8, Bytes)>,
@@ -68,7 +84,7 @@ impl ChannelManager {
         (seq, channel)
     }
 
-    pub(crate) fn dispatch(&self, cmd: u8, mut data: Bytes) {
+    pub(crate) fn dispatch(&self, cmd: PacketType, mut data: Bytes) -> Result<(), Error> {
         use std::collections::hash_map::Entry;
 
         let id: u16 = BigEndian::read_u16(data.split_to(2).as_ref());
@@ -76,10 +92,8 @@ impl ChannelManager {
         self.lock(|inner| {
             let current_time = Instant::now();
             if let Some(download_measurement_start) = inner.download_measurement_start {
-                if (current_time - download_measurement_start).as_millis()
-                    > ONE_SECOND_IN_MS as u128
-                {
-                    inner.download_rate_estimate = ONE_SECOND_IN_MS
+                if (current_time - download_measurement_start) > ONE_SECOND {
+                    inner.download_rate_estimate = ONE_SECOND.as_millis() as usize
                         * inner.download_measurement_bytes
                         / (current_time - download_measurement_start).as_millis() as usize;
                     inner.download_measurement_start = Some(current_time);
@@ -92,9 +106,14 @@ impl ChannelManager {
             inner.download_measurement_bytes += data.len();
 
             if let Entry::Occupied(entry) = inner.channels.entry(id) {
-                let _ = entry.get().send((cmd, data));
+                entry
+                    .get()
+                    .send((cmd as u8, data))
+                    .map_err(|_| ChannelError)?;
             }
-        });
+
+            Ok(())
+        })
     }
 
     pub fn get_download_rate_estimate(&self) -> usize {
@@ -114,7 +133,8 @@ impl Channel {
     fn recv_packet(&mut self, cx: &mut Context<'_>) -> Poll<Result<Bytes, ChannelError>> {
         let (cmd, packet) = ready!(self.receiver.poll_recv(cx)).ok_or(ChannelError)?;
 
-        if cmd == 0xa {
+        let packet_type = FromPrimitive::from_u8(cmd);
+        if let Some(PacketType::ChannelError) = packet_type {
             let code = BigEndian::read_u16(&packet.as_ref()[..2]);
             error!("channel error: {} {}", packet.len(), code);
 
@@ -139,7 +159,11 @@ impl Stream for Channel {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             match self.state.clone() {
-                ChannelState::Closed => panic!("Polling already terminated channel"),
+                ChannelState::Closed => {
+                    error!("Polling already terminated channel");
+                    return Poll::Ready(None);
+                }
+
                 ChannelState::Header(mut data) => {
                     if data.is_empty() {
                         data = ready!(self.recv_packet(cx))?;
@@ -147,7 +171,6 @@ impl Stream for Channel {
 
                     let length = BigEndian::read_u16(data.split_to(2).as_ref()) as usize;
                     if length == 0 {
-                        assert_eq!(data.len(), 0);
                         self.state = ChannelState::Data;
                     } else {
                         let header_id = data.split_to(1).as_ref()[0];

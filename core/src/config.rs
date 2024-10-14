@@ -1,33 +1,55 @@
-use std::fmt;
-use std::str::FromStr;
+use std::{fmt, path::PathBuf, str::FromStr};
+
 use url::Url;
+
+pub(crate) const KEYMASTER_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+pub(crate) const ANDROID_CLIENT_ID: &str = "9a8d2f0ce77a4e248bb71fefcb557637";
+pub(crate) const IOS_CLIENT_ID: &str = "58bd3c95768941ea9eb4350aaa033eb3";
 
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
-    pub user_agent: String,
+    pub client_id: String,
     pub device_id: String,
     pub proxy: Option<Url>,
     pub ap_port: Option<u16>,
+    pub tmp_dir: PathBuf,
+    pub autoplay: Option<bool>,
 }
 
-impl Default for SessionConfig {
-    fn default() -> SessionConfig {
+impl SessionConfig {
+    pub(crate) fn default_for_os(os: &str) -> Self {
         let device_id = uuid::Uuid::new_v4().as_hyphenated().to_string();
-        SessionConfig {
-            user_agent: crate::version::VERSION_STRING.to_string(),
+        let client_id = match os {
+            "android" => ANDROID_CLIENT_ID,
+            "ios" => IOS_CLIENT_ID,
+            _ => KEYMASTER_CLIENT_ID,
+        }
+        .to_owned();
+
+        Self {
+            client_id,
             device_id,
             proxy: None,
             ap_port: None,
+            tmp_dir: std::env::temp_dir(),
+            autoplay: None,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialOrd, Ord, PartialEq, Eq)]
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self::default_for_os(std::env::consts::OS)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialOrd, Ord, PartialEq, Eq, Default)]
 pub enum DeviceType {
     Unknown = 0,
     Computer = 1,
     Tablet = 2,
     Smartphone = 3,
+    #[default]
     Speaker = 4,
     Tv = 5,
     Avr = 6,
@@ -105,35 +127,8 @@ impl From<DeviceType> for &str {
 }
 
 impl fmt::Display for DeviceType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str: &str = self.into();
         f.write_str(str)
-    }
-}
-
-impl Default for DeviceType {
-    fn default() -> DeviceType {
-        DeviceType::Speaker
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ConnectConfig {
-    pub name: String,
-    pub device_type: DeviceType,
-    pub initial_volume: Option<u16>,
-    pub has_volume_ctrl: bool,
-    pub autoplay: bool,
-}
-
-impl Default for ConnectConfig {
-    fn default() -> ConnectConfig {
-        ConnectConfig {
-            name: "Librespot".to_string(),
-            device_type: DeviceType::default(),
-            initial_volume: Some(50),
-            has_volume_ctrl: true,
-            autoplay: false,
-        }
     }
 }

@@ -27,7 +27,7 @@ pub struct GstreamerSink {
 
 impl Open for GstreamerSink {
     fn open(device: Option<String>, format: AudioFormat) -> Self {
-        info!("Using GStreamer sink with format: {:?}", format);
+        info!("Using GStreamer sink with format: {format:?}");
         gst::init().expect("failed to init GStreamer!");
 
         let gst_format = match format {
@@ -47,8 +47,9 @@ impl Open for GstreamerSink {
         let sample_size = format.size();
         let gst_bytes = NUM_CHANNELS as usize * 2048 * sample_size;
 
-        let pipeline = gst::Pipeline::new(None);
-        let appsrc = gst::ElementFactory::make("appsrc", None)
+        let pipeline = gst::Pipeline::new();
+        let appsrc = gst::ElementFactory::make("appsrc")
+            .build()
             .expect("Failed to create GStreamer appsrc element")
             .downcast::<gst_app::AppSrc>()
             .expect("couldn't cast AppSrc element at runtime!");
@@ -59,13 +60,13 @@ impl Open for GstreamerSink {
         let sink = match device {
             None => {
                 // no need to dither twice; use librespot dithering instead
-                gst::parse_bin_from_description(
+                gst::parse::bin_from_description(
                     "audioconvert dithering=none ! audioresample ! autoaudiosink",
                     true,
                 )
                 .expect("Failed to create default GStreamer sink")
             }
-            Some(ref x) => gst::parse_bin_from_description(x, true)
+            Some(ref x) => gst::parse::bin_from_description(x, true)
                 .expect("Failed to create custom GStreamer sink"),
         };
         pipeline
@@ -141,10 +142,10 @@ impl Sink for GstreamerSink {
         self.appsrc.send_event(FlushStop::new(true));
         self.bufferpool
             .set_active(true)
-            .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+            .map_err(|e| SinkError::StateChange(e.to_string()))?;
         self.pipeline
             .set_state(State::Playing)
-            .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+            .map_err(|e| SinkError::StateChange(e.to_string()))?;
         Ok(())
     }
 
@@ -153,10 +154,10 @@ impl Sink for GstreamerSink {
         self.appsrc.send_event(FlushStart::new());
         self.pipeline
             .set_state(State::Paused)
-            .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+            .map_err(|e| SinkError::StateChange(e.to_string()))?;
         self.bufferpool
             .set_active(false)
-            .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+            .map_err(|e| SinkError::StateChange(e.to_string()))?;
         Ok(())
     }
 

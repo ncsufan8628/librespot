@@ -1,13 +1,19 @@
-use std::env;
+use std::{env, process::exit};
 
-use librespot::core::authentication::Credentials;
-use librespot::core::config::SessionConfig;
-use librespot::core::session::Session;
-use librespot::core::spotify_id::SpotifyId;
-use librespot::playback::audio_backend;
-use librespot::playback::config::{AudioFormat, PlayerConfig};
-use librespot::playback::mixer::NoOpVolume;
-use librespot::playback::player::Player;
+use librespot::{
+    core::{
+        authentication::Credentials,
+        config::SessionConfig,
+        session::Session,
+        spotify_id::{SpotifyId, SpotifyItemType},
+    },
+    playback::{
+        audio_backend,
+        config::{AudioFormat, PlayerConfig},
+        mixer::NoOpVolume,
+        player::Player,
+    },
+};
 
 #[tokio::main]
 async fn main() {
@@ -16,22 +22,25 @@ async fn main() {
     let audio_format = AudioFormat::default();
 
     let args: Vec<_> = env::args().collect();
-    if args.len() != 4 {
-        eprintln!("Usage: {} USERNAME PASSWORD TRACK", args[0]);
+    if args.len() != 3 {
+        eprintln!("Usage: {} ACCESS_TOKEN TRACK", args[0]);
         return;
     }
-    let credentials = Credentials::with_password(&args[1], &args[2]);
+    let credentials = Credentials::with_access_token(&args[1]);
 
-    let track = SpotifyId::from_base62(&args[3]).unwrap();
+    let mut track = SpotifyId::from_base62(&args[2]).unwrap();
+    track.item_type = SpotifyItemType::Track;
 
     let backend = audio_backend::find(None).unwrap();
 
-    println!("Connecting ..");
-    let (session, _) = Session::connect(session_config, credentials, None, false)
-        .await
-        .unwrap();
+    println!("Connecting...");
+    let session = Session::new(session_config, None);
+    if let Err(e) = session.connect(credentials, false).await {
+        println!("Error connecting: {}", e);
+        exit(1);
+    }
 
-    let (mut player, _) = Player::new(player_config, session, Box::new(NoOpVolume), move || {
+    let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
         backend(None, audio_format)
     });
 

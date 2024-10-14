@@ -5,7 +5,140 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) since v0.2.0.
 
+## [0.5.0-dev] - YYYY-MM-DD
+
+This version will be a major departure from the architecture up until now. It
+focuses on implementing the "new Spotify API". This  means moving large parts
+of the Spotify protocol from Mercury to HTTP. A lot of this was reverse
+engineered before by @devgianlu of librespot-java. It was long overdue that we
+started implementing it too, not in the least because new features like the
+hopefully upcoming Spotify HiFi depend on it.
+
+Splitting up the work on the new Spotify API, v0.5.0 brings HTTP-based file
+downloads and metadata access. Implementing the "dealer" (replacing the current
+Mercury-based SPIRC message bus with WebSockets, also required for social plays)
+is separate large effort, to be targeted for v0.6.0.
+
+While at it, we are taking the liberty to do some major refactoring to make
+librespot more robust. Consequently not only the Spotify API changed but large
+parts of the librespot API too. For downstream maintainers, we realise that it
+can be a lot to move from the current codebase to this one, but believe us it
+will be well worth it.
+
+All these changes are likely to introduce new bugs as well as some regressions.
+We appreciate all your testing and contributions to the repository:
+https://github.com/librespot-org/librespot
+
+### Changed
+
+- [all] Assertions were changed into `Result` or removed (breaking)
+- [all] Purge use of `unwrap`, `expect` and return `Result` (breaking)
+- [all] `chrono` replaced with `time` (breaking)
+- [all] `time` updated (CVE-2020-26235)
+- [all] Improve lock contention and performance (breaking)
+- [all] Use a single `player` instance. Eliminates occasional `player` and
+  `audio backend` restarts, which can cause issues with some playback
+  configurations.
+- [audio] Files are now downloaded over the HTTPS CDN (breaking)
+- [audio] Improve file opening and seeking performance (breaking)
+- [core] MSRV is now 1.74 (breaking)
+- [connect] `DeviceType` moved out of `connect` into `core` (breaking)
+- [connect] Update and expose all `spirc` context fields (breaking)
+- [connect] Add `Clone, Defaut` traits to `spirc` contexts
+- [connect] Autoplay contexts are now retrieved with the `spclient` (breaking)
+- [core] Message listeners are registered before authenticating. As a result
+  there now is a separate `Session::new` and subsequent `session.connect`.
+  (breaking)
+- [core] `ConnectConfig` moved out of `core` into `connect` (breaking)
+- [core] `client_id` for `get_token` moved to `SessionConfig` (breaking)
+- [core] Mercury code has been refactored for better legibility (breaking)
+- [core] Cache resolved access points during runtime (breaking)
+- [core] `FileId` is moved out of `SpotifyId`. For now it will be re-exported.
+- [core] Report actual platform data on login
+- [core] Support `Session` authentication with a Spotify access token
+- [core] `Credentials.username` is now an `Option` (breaking)
+- [core] `Session::connect` tries multiple access points, retrying each one.
+- [core] Each access point connection now timesout after 3 seconds.
+- [main] `autoplay {on|off}` now acts as an override. If unspecified, `librespot`
+  now follows the setting in the Connect client that controls it. (breaking)
+- [metadata] Most metadata is now retrieved with the `spclient` (breaking)
+- [metadata] Playlists are moved to the `playlist4_external` protobuf (breaking)
+- [metadata] Handle playlists that are sent with microsecond-based timestamps
+- [playback] The audio decoder has been switched from `lewton` to `Symphonia`.
+  This improves the Vorbis sound quality, adds support for MP3 as well as for
+  FLAC in the future. (breaking)
+- [playback] Improve reporting of actual playback cursor
+- [playback] The passthrough decoder is now feature-gated (breaking)
+- [playback] `rodio`: call play and pause
+- [protocol] protobufs have been updated
+
+### Added
+
+- [all] Check that array indexes are within bounds (panic safety)
+- [all] Wrap errors in librespot `Error` type (breaking)
+- [connect] Add option on which zeroconf will bind. Defaults to all interfaces. Ignored by DNS-SD.
+- [connect] Add session events
+- [connect] Add `repeat`, `set_position_ms` and `set_volume` to `spirc.rs`
+- [contrib] Add `event_handler_example.py`
+- [core] Send metrics with metadata queries: client ID, country & product
+- [core] Verify Spotify server certificates (prevents man-in-the-middle attacks)
+- [core] User attributes are stored in `Session` upon login, accessible with a
+  getter and setter, and automatically updated as changes are pushed by the
+  Spotify infrastructure (breaking)
+- [core] HTTPS is now supported, including for proxies (breaking)
+- [core] Resolve `spclient` and `dealer` access points (breaking)
+- [core] Get and cache tokens through new token provider (breaking)
+- [core] `spclient` is the API for HTTP-based calls to the Spotify servers.
+  It supports a lot of functionality, including audio previews and image
+  downloads even if librespot doesn't use that for playback itself.
+- [core] Support downloading of lyrics
+- [core] Support parsing `SpotifyId` for local files
+- [core] Support parsing `SpotifyId` for named playlists
+- [core] Add checks and handling for stale server connections.
+- [main] Add all player events to `player_event_handler.rs`
+- [main] Add an event worker thread that runs async to the main thread(s) but
+  sync to itself to prevent potential data races for event consumers
+- [metadata] All metadata fields in the protobufs are now exposed (breaking)
+- [oauth] Standalone module to obtain Spotify access token using OAuth authorization code flow.
+- [playback] Explicit tracks are skipped if the controlling Connect client has
+  disabled such content. Applications that use librespot as a library without
+  Connect should use the 'filter-explicit-content' user attribute in the session.
+- [playback] Add metadata support via a `TrackChanged` event
+- [connect] Add `activate` and `load` functions to `Spirc`, allowing control over local connect sessions
+- [metadata] Add `Lyrics`
+- [discovery] Add discovery initialisation retries if within the 1st min of uptime
+
+### Fixed
+
+- [connect] Set `PlayStatus` to the correct value when Player is loading to
+  avoid blanking out the controls when `self.play_status` is `LoadingPlay` or
+  `LoadingPause` in `spirc.rs`
+- [connect] Handle attempts to play local files better by basically ignoring
+  attempts to load them in `handle_remote_update` in `spirc.rs`
+- [connect] Loading previous or next tracks, or looping back on repeat, will
+  only start playback when we were already playing
+- [connect, playback] Clean up and de-noise events and event firing
+- [playback] Handle invalid track start positions by just starting the track
+  from the beginning
+- [playback] Handle disappearing and invalid devices better
+- [playback] Handle seek, pause, and play commands while loading
+- [playback] Handle disabled normalisation correctly when using fixed volume
+- [metadata] Fix missing colon when converting named spotify IDs to URIs
+
 ## [0.4.2] - 2022-07-29
+
+Besides a couple of small fixes, this point release is mainly to blacklist the
+ap-gew4 and ap-gue1 access points that caused librespot to fail to playback
+anything.
+
+Development will now shift to the new HTTP-based API, targeted for a future
+v0.5.0 release. The new-api branch will therefore be promoted to dev. This is a
+major departure from the old API and although it brings many exciting new
+things, it is also likely to introduce new bugs and some regressions.
+
+Long story short, this v0.4.2 release is the most stable that librespot has yet
+to offer. But, unless anything big comes up, it is also intended as the last
+release to be based on the old API. Happy listening.
 
 ### Changed
 - [playback] `pipe`: Better error handling
@@ -19,9 +152,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [main] fix `--opt=value` line argument logging
 - [playback] `alsamixer`: make `--volume-ctrl fixed` work as expected when combined with `--mixer alsa`
 
-## Removed
-
 ## [0.4.1] - 2022-05-23
+
+This release fixes dependency issues when installing from crates.
 
 ### Changed
 - [chore] The MSRV is now 1.56
@@ -30,6 +163,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [playback] Fixed dependency issues when installing from crate
 
 ## [0.4.0] - 2022-05-21
+
+Note: This version was yanked, because a corrupt package was uploaded and failed
+to install.
+
+This is a polishing release, adding a few little extras and improving on many
+thers. We had to break a couple of API's to do so, and therefore bumped the
+minor version number. v0.4.x may be the last in series before we migrate from
+the current channel-based Spotify backend to a more HTTP-based backend.
+Targeting that major effort for a v0.5 release sometime, we intend to maintain
+v0.4.x as a stable branch until then.
 
 ### Changed
 - [chore] The MSRV is now 1.53
@@ -141,6 +284,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2019-11-06
 
+[0.5.0-dev]: https://github.com/librespot-org/librespot/compare/v0.4.1..HEAD
 [0.4.2]: https://github.com/librespot-org/librespot/compare/v0.4.1..v0.4.2
 [0.4.1]: https://github.com/librespot-org/librespot/compare/v0.4.0..v0.4.1
 [0.4.0]: https://github.com/librespot-org/librespot/compare/v0.3.1..v0.4.0
